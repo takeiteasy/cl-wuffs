@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Generate CFFI declarations from the public cl_wuffs C ABI."""
 import json, pathlib, subprocess, sys
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parent
 HEADER, OUTPUT = ROOT / "src/cl_wuffs.h", ROOT / "bindings/generated.lisp"
-TYPES = {"void": ":void", "int32_t": ":int32", "uint32_t": ":uint32", "size_t": ":size"}
+TYPES = {"void": ":void", "bool": ":boolean", "_Bool": ":boolean", "int32_t": ":int32", "uint32_t": ":uint32", "size_t": ":size"}
 def walk(node):
     yield node
     for child in node.get("inner", []): yield from walk(child)

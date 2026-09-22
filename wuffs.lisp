@@ -6,6 +6,7 @@
 
 (define-condition unknown-format (wuffs-error) ())
 (define-condition decode-error (wuffs-error) ())
+(define-condition decompression-error (wuffs-error) ())
 
 (defstruct image
   (pixels (make-array 0 :element-type '(unsigned-byte 8)) :type (simple-array (unsigned-byte 8) (*)))
@@ -18,6 +19,27 @@
     (error 'type-error :datum octets :expected-type '(array (unsigned-byte 8) (*))))
   octets)
 
+(defun read-octets (stream)
+  (let ((chunk (make-array 8192 :element-type '(unsigned-byte 8)))
+        (octets (make-array 0 :element-type '(unsigned-byte 8)
+                              :adjustable t :fill-pointer 0)))
+    (loop for length = (read-sequence chunk stream)
+          while (plusp length)
+          do (loop for index below length
+                   do (vector-push-extend (aref chunk index) octets)))
+    (let ((result (make-array (length octets) :element-type '(unsigned-byte 8))))
+      (replace result octets)
+      result)))
+
+(defun input-octets (input)
+  (cond ((typep input '(array (unsigned-byte 8) (*))) input)
+        ((pathnamep input)
+         (with-open-file (stream input :element-type '(unsigned-byte 8))
+           (read-octets stream)))
+        ((typep input 'stream) (read-octets input))
+        (t (error 'type-error :datum input
+                  :expected-type '(or (array (unsigned-byte 8) (*)) pathname stream)))))
+
 (defun fourcc-keyword (fourcc)
   (intern (string-right-trim " "
                              (map 'string (lambda (shift)
@@ -25,18 +47,18 @@
                                   '(24 16 8 0)))
           :keyword))
 
-(defun detect-format (octets)
-  (let* ((data (ensure-octets octets))
+(defun detect-format (input)
+  (let* ((data (ensure-octets (input-octets input)))
          (fourcc (cl-wuffs.bindings:detect-format data)))
     (if (plusp fourcc)
         (fourcc-keyword fourcc)
         (error 'unknown-format :message "Unsupported or unrecognized data."))))
 
-(defun inspect (octets)
-  (list :format (detect-format octets)))
+(defun inspect (input)
+  (list :format (detect-format input)))
 
-(defun decode (octets)
-  (progn
+(defun decode (input)
+  (let ((octets (ensure-octets (input-octets input))))
     (detect-format octets)
     (multiple-value-bind (foreign-image status message)
         (cl-wuffs.bindings:decode-image (ensure-octets octets))
@@ -58,3 +80,60 @@
 
 (defun adler32 (octets)
   (cl-wuffs.bindings:adler32 (ensure-octets octets)))
+
+(defstruct (decompressor (:constructor %make-decompressor (handle)))
+  handle
+  (state :open))
+
+(defun compression-format (format)
+  (ecase format
+    (:bzip2 1)
+    (:deflate 2)
+    (:gzip 3)
+    (:lzw 4)
+    (:zlib 5)))
+
+(defun make-decompressor (format &key literal-width)
+  (when (and (eq format :lzw) (null literal-width))
+    (error 'type-error :datum literal-width :expected-type '(integer 2 8)))
+  (when (and (not (eq format :lzw)) literal-width)
+    (error 'type-error :datum literal-width :expected-type 'null))
+  (multiple-value-bind (handle status message)
+      (cl-wuffs.bindings:decompressor-create (compression-format format)
+                                              (or literal-width 0))
+    (unless (zerop status)
+      (error 'decompression-error :message (or message "Could not create decompressor.")))
+    (%make-decompressor handle)))
+
+(defun ensure-open-decompressor (decompressor)
+  (unless (and (typep decompressor 'decompressor)
+               (eq (decompressor-state decompressor) :open))
+    (error 'decompression-error :message "Decompressor is not open."))
+  decompressor)
+
+(defun decompress-chunk (decompressor octets)
+  (ensure-open-decompressor decompressor)
+  (multiple-value-bind (output status message)
+      (cl-wuffs.bindings:decompressor-process (decompressor-handle decompressor)
+                                               (ensure-octets octets) nil)
+    (unless (zerop status)
+      (error 'decompression-error :message (or message "Decompression failed.")))
+    output))
+
+(defun finish-decompressor (decompressor)
+  (ensure-open-decompressor decompressor)
+  (multiple-value-bind (output status message)
+      (cl-wuffs.bindings:decompressor-process (decompressor-handle decompressor)
+                                               (make-array 0 :element-type '(unsigned-byte 8)) t)
+    (unless (zerop status)
+      (error 'decompression-error :message (or message "Decompression failed.")))
+    (setf (decompressor-state decompressor) :finished)
+    output))
+
+(defun close-decompressor (decompressor)
+  (when (and (typep decompressor 'decompressor)
+             (decompressor-handle decompressor))
+    (cl-wuffs.bindings:decompressor-free (decompressor-handle decompressor))
+    (setf (decompressor-handle decompressor) nil
+          (decompressor-state decompressor) :closed))
+  nil)

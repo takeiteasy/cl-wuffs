@@ -25,22 +25,9 @@ export CL_WUFFS_LIBRARY="$PWD/build/libcl_wuffs.dylib"
 
 ## API
 
-`detect-format`, `inspect`, and `decode` accept octet vectors and inspect their
-contents directly. `decode` returns an `image` with BGRA premultiplied pixels,
-width, height, and stride. Animated images return their first composited frame.
-
-```lisp
-(cl-wuffs:inspect octets)
-;; => (:FORMAT :PNG)
-
-(defparameter image (cl-wuffs:decode octets))
-(cl-wuffs:image-width image)
-```
-
-`unknown-format` and `decode-error` are typed conditions. `adler32` computes
-the Adler-32 checksum of an octet vector.
-
-The bundled native shim decodes BMP, GIF, NIE, PNG, TGA, and WBMP images.
+See [image input](docs/image-input.md) and
+[streaming decompression](docs/decompression.md). The bundled native shim
+decodes BMP, GIF, NIE, PNG, TGA, and WBMP images.
 
 ## Generated bindings
 

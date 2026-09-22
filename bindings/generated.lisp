@@ -26,6 +26,27 @@
   (length :size)
 )
 
+(defcfun ("cl_wuffs_decompressor_create" %decompressor-create) :int32
+  (format :int32)
+  (literal-width :uint32)
+  (decompressor :pointer)
+  (error-message :pointer)
+)
+
+(defcfun ("cl_wuffs_decompressor_process" %decompressor-process) :int32
+  (decompressor :pointer)
+  (data :pointer)
+  (length :size)
+  (finish :boolean)
+  (output :pointer)
+  (output-length :pointer)
+  (error-message :pointer)
+)
+
+(defcfun ("cl_wuffs_decompressor_free" %decompressor-free) :void
+  (decompressor :pointer)
+)
+
 (defcfun ("cl_wuffs_free" %free) :void
   (pointer :pointer)
 )

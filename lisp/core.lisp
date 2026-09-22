@@ -13,29 +13,31 @@
   (height 0 :type (unsigned-byte 32))
   (stride 0 :type (unsigned-byte 32)))
 
-(defparameter +format-map+
-  '((1112363040 . :bmp) (1195984416 . :gif) (1313420576 . :nie)
-    (1347307296 . :png) (1413564448 . :tga) (1463966288 . :wbmp)
-    (1113215520 . :bz2) (1197031456 . :gz) (1514942786 . :zlib)))
-
 (defun ensure-octets (octets)
   (unless (typep octets '(array (unsigned-byte 8) (*)))
     (error 'type-error :datum octets :expected-type '(array (unsigned-byte 8) (*))))
   octets)
 
+(defun fourcc-keyword (fourcc)
+  (intern (string-right-trim " "
+                             (map 'string (lambda (shift)
+                                           (code-char (ldb (byte 8 shift) fourcc)))
+                                  '(24 16 8 0)))
+          :keyword))
+
 (defun detect-format (octets)
   (let* ((data (ensure-octets octets))
-         (fourcc (cl-wuffs.bindings:detect-format data))
-         (format (cdr (assoc fourcc +format-map+))))
-    (or format (error 'unknown-format :message "Unsupported or unrecognized data."))))
+         (fourcc (cl-wuffs.bindings:detect-format data)))
+    (if (plusp fourcc)
+        (fourcc-keyword fourcc)
+        (error 'unknown-format :message "Unsupported or unrecognized data."))))
 
 (defun inspect (octets)
   (list :format (detect-format octets)))
 
 (defun decode (octets)
-  (let ((format (detect-format octets)))
-    (unless (member format '(:bmp :gif :nie :png :tga :wbmp))
-      (error 'decode-error :message "The detected format is not an image decoder."))
+  (progn
+    (detect-format octets)
     (multiple-value-bind (foreign-image status message)
         (cl-wuffs.bindings:decode-image (ensure-octets octets))
       (unless (zerop status)

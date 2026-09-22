@@ -9,6 +9,13 @@
   (stride :uint32)
 )
 
+(defcstruct foreign-animation
+  (frames :pointer)
+  (durations-milliseconds :pointer)
+  (frame-count :size)
+  (loop-count :uint32)
+)
+
 (defcfun ("cl_wuffs_detect_format" %detect-format) :int32
   (data :pointer)
   (length :size)
@@ -19,6 +26,17 @@
   (length :size)
   (image :pointer)
   (error-message :pointer)
+)
+
+(defcfun ("cl_wuffs_decode_animation" %decode-animation) :int32
+  (data :pointer)
+  (length :size)
+  (animation :pointer)
+  (error-message :pointer)
+)
+
+(defcfun ("cl_wuffs_animation_free" %animation-free) :void
+  (animation :pointer)
 )
 
 (defcfun ("cl_wuffs_adler32" %adler32) :uint32

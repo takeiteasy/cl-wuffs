@@ -39,6 +39,13 @@ struct cl_wuffs_image {
   uint32_t stride;
 };
 
+struct cl_wuffs_animation {
+  struct cl_wuffs_image* frames;
+  uint64_t* durations_milliseconds;
+  size_t frame_count;
+  uint32_t loop_count;
+};
+
 struct cl_wuffs_decompressor;
 struct cl_wuffs_hasher;
 
@@ -46,6 +53,10 @@ int32_t cl_wuffs_detect_format(const uint8_t* data, size_t length);
 int32_t cl_wuffs_decode_image(const uint8_t* data, size_t length,
                               struct cl_wuffs_image* image,
                               const char** error_message);
+int32_t cl_wuffs_decode_animation(const uint8_t* data, size_t length,
+                                  struct cl_wuffs_animation* animation,
+                                  const char** error_message);
+void cl_wuffs_animation_free(struct cl_wuffs_animation* animation);
 uint32_t cl_wuffs_adler32(const uint8_t* data, size_t length);
 uint32_t cl_wuffs_crc32(const uint8_t* data, size_t length);
 int32_t cl_wuffs_hasher_create(int32_t algorithm,

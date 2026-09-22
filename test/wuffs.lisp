@@ -75,6 +75,56 @@
       (is (= 512 (image-width image)))
       (is (= 512 (image-height image))))))
 
+(test decodes-animation-frames
+  (let* ((animation (decode-animation
+                     (hex-octets
+                      "47494638396101000100800000ff000000000021ff0b4e45545343415045322e30030100000021f904000a0000002c000000000100010000020244010021f90400140000002c00000000010001000002024c01003b")))
+         (frames (animation-frames animation)))
+    (is (= 2 (length frames)))
+    (is (= 100 (animation-frame-duration-milliseconds (aref frames 0))))
+    (is (= 200 (animation-frame-duration-milliseconds (aref frames 1))))
+    (is (eq :infinite (animation-loop-count animation)))
+    (is (= 1 (image-width (animation-frame-image (aref frames 0)))))))
+
+(defun zip-u16-octets (value)
+  (vector (ldb (byte 8 0) value) (ldb (byte 8 8) value)))
+
+(defun zip-u32-octets (value)
+  (concatenate '(vector (unsigned-byte 8)) (zip-u16-octets value) (zip-u16-octets (ash value -16))))
+
+(defun test-zip (name payload &key (method 0) (compressed payload) (crc (crc32 payload)))
+  (let ((name-octets (ascii-octets name)))
+    (flet ((header (signature fields)
+             (apply #'concatenate '(vector (unsigned-byte 8))
+                    (zip-u32-octets signature) fields)))
+      (let ((local (header #x04034B50 (list (zip-u16-octets 20) (zip-u16-octets 0)
+                                             (zip-u16-octets method) #(0 0 0 0)
+                                             (zip-u32-octets crc) (zip-u32-octets (length compressed))
+                                             (zip-u32-octets (length payload)) (zip-u16-octets (length name-octets)) #(0 0))))
+            (central (header #x02014B50 (list (zip-u16-octets 20) (zip-u16-octets 20) (zip-u16-octets 0)
+                                               (zip-u16-octets method) #(0 0 0 0) (zip-u32-octets crc)
+                                               (zip-u32-octets (length compressed)) (zip-u32-octets (length payload))
+                                               (zip-u16-octets (length name-octets)) (zip-u16-octets 0) (zip-u16-octets 0)
+                                               (zip-u16-octets 0) (zip-u16-octets 0) (zip-u32-octets 0)
+                                               (zip-u32-octets 0)))) )
+        (let* ((prefix (concatenate '(vector (unsigned-byte 8)) local name-octets compressed))
+               (directory (concatenate '(vector (unsigned-byte 8)) central name-octets))
+               (eocd (header #x06054B50 (list #(0 0 0 0) (zip-u16-octets 1) (zip-u16-octets 1)
+                                                (zip-u32-octets (length directory)) (zip-u32-octets (length prefix)) #(0 0)))))
+          (concatenate '(vector (unsigned-byte 8)) prefix directory eocd))))))
+
+(test reads-zip-archives
+  (let* ((payload (ascii-octets (format nil "hello wuffs~%")))
+         (archive (open-zip (test-zip "hello.txt" payload))))
+    (is (= 1 (length (zip-entries archive))))
+    (is (string= "hello.txt" (zip-entry-name (aref (zip-entries archive) 0))))
+    (is (equalp payload (read-zip-entry archive "hello.txt"))))
+  (let ((payload (ascii-octets (format nil "hello wuffs~%")))
+        (raw-deflate (hex-octets "cb48cdc9c957282f4d4b2be60200")))
+    (is (equalp payload (read-zip-entry (open-zip (test-zip "deflated.txt" payload :method 8 :compressed raw-deflate))
+                                         "deflated.txt"))))
+  (signals zip-error (open-zip (hex-octets "504b050600000000000000000000000000000000"))))
+
 (test accepts-pathnames-and-binary-streams
   (let ((path (merge-pathnames "lena.png" *test-directory*)))
     (is (eq :png (detect-format path)))

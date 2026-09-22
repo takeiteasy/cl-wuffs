@@ -1,6 +1,6 @@
 (defpackage #:cl-wuffs.bindings
   (:use #:cl #:cffi)
-  (:export #:load-library #:detect-format #:decode-image #:adler32 #:crc32 #:free-image
+  (:export #:load-library #:detect-format #:decode-image #:decode-animation #:free-animation #:adler32 #:crc32 #:free-image
            #:hasher-create #:hasher-update #:hasher-free
            #:decompressor-create #:decompressor-process #:decompressor-free
            #:foreign-image #:foreign-image-pixels #:foreign-image-length

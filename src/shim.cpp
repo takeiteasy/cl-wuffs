@@ -33,6 +33,31 @@ bool set_error(const char** error_message, const char* message) {
   return false;
 }
 
+wuffs_base__image_decoder::unique_ptr make_image_decoder(int32_t fourcc) {
+  switch (fourcc) {
+    case WUFFS_BASE__FOURCC__BMP:
+      return wuffs_bmp__decoder::alloc_as__wuffs_base__image_decoder();
+    case WUFFS_BASE__FOURCC__GIF:
+      return wuffs_gif__decoder::alloc_as__wuffs_base__image_decoder();
+    case WUFFS_BASE__FOURCC__NIE:
+      return wuffs_nie__decoder::alloc_as__wuffs_base__image_decoder();
+    case WUFFS_BASE__FOURCC__PNG:
+      return wuffs_png__decoder::alloc_as__wuffs_base__image_decoder();
+    case WUFFS_BASE__FOURCC__TGA:
+      return wuffs_tga__decoder::alloc_as__wuffs_base__image_decoder();
+    case WUFFS_BASE__FOURCC__WBMP:
+      return wuffs_wbmp__decoder::alloc_as__wuffs_base__image_decoder();
+    default:
+      return wuffs_base__image_decoder::unique_ptr(nullptr, &free);
+  }
+}
+
+int32_t fail_status(const char** error_message, wuffs_base__status status) {
+  last_error = status.repr ? status.message() : "image decode failed";
+  if (error_message) *error_message = last_error.c_str();
+  return CL_WUFFS_DECODE_ERROR;
+}
+
 }  // namespace
 
 struct cl_wuffs_decompressor {
@@ -109,6 +134,106 @@ extern "C" int32_t cl_wuffs_decode_image(const uint8_t* data, size_t length,
   image->height = wuffs_base__pixel_config__height(&result.pixbuf.pixcfg);
   image->stride = image->width * 4;
   return CL_WUFFS_OK;
+}
+
+extern "C" int32_t cl_wuffs_decode_animation(
+    const uint8_t* data, size_t length, struct cl_wuffs_animation* animation,
+    const char** error_message) {
+  if (error_message) *error_message = nullptr;
+  if (!animation || (!data && length)) {
+    set_error(error_message, "invalid argument");
+    return CL_WUFFS_INVALID_ARGUMENT;
+  }
+  std::memset(animation, 0, sizeof(*animation));
+  const int32_t fourcc = cl_wuffs_detect_format(data, length);
+  auto decoder = make_image_decoder(fourcc);
+  if (!decoder) {
+    set_error(error_message, "unknown image format");
+    return CL_WUFFS_UNKNOWN_FORMAT;
+  }
+  wuffs_base__io_buffer input = wuffs_base__make_io_buffer(
+      wuffs_base__make_slice_u8(const_cast<uint8_t*>(data), length),
+      wuffs_base__make_io_buffer_meta(length, 0, 0, true));
+  wuffs_base__image_config config = wuffs_base__null_image_config();
+  wuffs_base__status status = decoder->decode_image_config(&config, &input);
+  if (!status.is_ok()) return fail_status(error_message, status);
+  const uint32_t width = config.pixcfg.width();
+  const uint32_t height = config.pixcfg.height();
+  config.pixcfg.set(WUFFS_BASE__PIXEL_FORMAT__BGRA_PREMUL,
+                    WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, width, height);
+  const uint64_t byte_count = config.pixcfg.pixbuf_len();
+  if (byte_count > SIZE_MAX) {
+    set_error(error_message, "image is too large");
+    return CL_WUFFS_OUT_OF_MEMORY;
+  }
+  std::vector<uint8_t> canvas(static_cast<size_t>(byte_count), 0);
+  wuffs_base__pixel_buffer pixbuf = wuffs_base__null_pixel_buffer();
+  status = pixbuf.set_from_slice(&config.pixcfg,
+                                 wuffs_base__make_slice_u8(canvas.data(), canvas.size()));
+  if (!status.is_ok()) return fail_status(error_message, status);
+  const auto workbuf_range = decoder->workbuf_len();
+  if (workbuf_range.max_incl > SIZE_MAX) {
+    set_error(error_message, "decoder work buffer is too large");
+    return CL_WUFFS_OUT_OF_MEMORY;
+  }
+  std::vector<uint8_t> workbuf(static_cast<size_t>(workbuf_range.max_incl));
+  std::vector<cl_wuffs_image> frames;
+  std::vector<uint64_t> durations;
+  for (;;) {
+    wuffs_base__frame_config frame_config = wuffs_base__null_frame_config();
+    status = decoder->decode_frame_config(&frame_config, &input);
+    if (status.repr == wuffs_base__note__end_of_data) break;
+    if (!status.is_ok()) return fail_status(error_message, status);
+    std::vector<uint8_t> previous;
+    if (frame_config.disposal() == WUFFS_BASE__ANIMATION_DISPOSAL__RESTORE_PREVIOUS) {
+      previous = canvas;
+    }
+    auto blend = frame_config.overwrite_instead_of_blend()
+                     ? WUFFS_BASE__PIXEL_BLEND__SRC
+                     : WUFFS_BASE__PIXEL_BLEND__SRC_OVER;
+    status = decoder->decode_frame(&pixbuf, &input, blend,
+                                   wuffs_base__make_slice_u8(workbuf.data(), workbuf.size()), nullptr);
+    if (!status.is_ok()) return fail_status(error_message, status);
+    uint8_t* pixels = static_cast<uint8_t*>(std::malloc(canvas.size()));
+    if (!pixels && !canvas.empty()) {
+      set_error(error_message, "out of memory");
+      return CL_WUFFS_OUT_OF_MEMORY;
+    }
+    if (!canvas.empty()) std::memcpy(pixels, canvas.data(), canvas.size());
+    frames.push_back({pixels, canvas.size(), width, height, width * 4});
+    durations.push_back(static_cast<uint64_t>(frame_config.duration()) /
+                        WUFFS_BASE__FLICKS_PER_MILLISECOND);
+    if (frame_config.disposal() == WUFFS_BASE__ANIMATION_DISPOSAL__RESTORE_BACKGROUND) {
+      pixbuf.set_color_u32_fill_rect(frame_config.bounds(), 0);
+    } else if (frame_config.disposal() == WUFFS_BASE__ANIMATION_DISPOSAL__RESTORE_PREVIOUS) {
+      canvas.swap(previous);
+    }
+  }
+  if (frames.empty()) {
+    set_error(error_message, "image contains no frames");
+    return CL_WUFFS_DECODE_ERROR;
+  }
+  animation->frames = static_cast<cl_wuffs_image*>(std::malloc(frames.size() * sizeof(*animation->frames)));
+  animation->durations_milliseconds = static_cast<uint64_t*>(std::malloc(durations.size() * sizeof(*animation->durations_milliseconds)));
+  if (!animation->frames || !animation->durations_milliseconds) {
+    cl_wuffs_animation_free(animation);
+    for (auto& frame : frames) std::free(frame.pixels);
+    set_error(error_message, "out of memory");
+    return CL_WUFFS_OUT_OF_MEMORY;
+  }
+  std::memcpy(animation->frames, frames.data(), frames.size() * sizeof(*animation->frames));
+  std::memcpy(animation->durations_milliseconds, durations.data(), durations.size() * sizeof(*animation->durations_milliseconds));
+  animation->frame_count = frames.size();
+  animation->loop_count = decoder->num_animation_loops();
+  return CL_WUFFS_OK;
+}
+
+extern "C" void cl_wuffs_animation_free(struct cl_wuffs_animation* animation) {
+  if (!animation) return;
+  for (size_t i = 0; i < animation->frame_count; i++) std::free(animation->frames[i].pixels);
+  std::free(animation->frames);
+  std::free(animation->durations_milliseconds);
+  std::memset(animation, 0, sizeof(*animation));
 }
 
 extern "C" uint32_t cl_wuffs_adler32(const uint8_t* data, size_t length) {

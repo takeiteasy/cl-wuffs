@@ -8,5 +8,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y sbcl cmake clang
+      - run: sudo apt-get update && sudo apt-get install -y sbcl cmake clang cl-cffi cl-fiveam
       - run: ./test/verify.sh

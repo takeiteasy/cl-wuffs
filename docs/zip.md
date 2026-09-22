@@ -9,8 +9,9 @@
 ```
 
 Stored and Deflate entries are supported. CRC-32 is checked on every read.
-Encrypted, multi-disk, Zip64, and other compression methods signal `zip-error`.
+Zip64 archive metadata and entry sizes and offsets are supported. Encrypted,
+multi-disk, and other compression methods signal `zip-error`.
 
 Default limits are 10,000 entries, 64 MiB compressed and 256 MiB decompressed
 per entry, and 1 GiB total decompressed size. Override them with `open-zip`'s
-limit keywords when needed.
+limit keywords when needed. Archives are read into memory.

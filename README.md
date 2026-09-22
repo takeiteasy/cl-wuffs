@@ -25,7 +25,7 @@ export CL_WUFFS_LIBRARY="$PWD/build/libcl_wuffs.dylib"
 
 ## API
 
-See [image input](docs/image-input.md) and
+See [image input](docs/image-input.md), [checksums](docs/checksums.md), and
 [streaming decompression](docs/decompression.md). The bundled native shim
 decodes BMP, GIF, NIE, PNG, TGA, and WBMP images.
 

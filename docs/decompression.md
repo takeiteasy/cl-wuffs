@@ -16,3 +16,19 @@ Call `close-decompressor` when finished.
 
 LZW requires a literal width: `(make-decompressor :lzw :literal-width 8)`.
 Malformed, truncated, or invalid decoder use signals `decompression-error`.
+
+## Stream-to-stream decompression
+
+`decompress-stream` reads a binary input stream and writes decoded octets to a
+binary output stream. It uses an 8 KiB buffer by default; pass `:buffer-size`
+to change it.
+
+```lisp
+(with-open-file (input #p"archive.gz" :element-type '(unsigned-byte 8))
+  (with-open-file (output #p"archive" :direction :output :if-exists :supersede
+                   :element-type '(unsigned-byte 8))
+    (cl-wuffs:decompress-stream :gzip input output)))
+```
+
+It does not close either stream. If decompression fails, it signals
+`decompression-error` and leaves bytes already written to the output stream.

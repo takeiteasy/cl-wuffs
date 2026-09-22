@@ -26,6 +26,29 @@
   (length :size)
 )
 
+(defcfun ("cl_wuffs_crc32" %crc32) :uint32
+  (data :pointer)
+  (length :size)
+)
+
+(defcfun ("cl_wuffs_hasher_create" %hasher-create) :int32
+  (algorithm :int32)
+  (hasher :pointer)
+  (error-message :pointer)
+)
+
+(defcfun ("cl_wuffs_hasher_update" %hasher-update) :int32
+  (hasher :pointer)
+  (data :pointer)
+  (length :size)
+  (digest :pointer)
+  (error-message :pointer)
+)
+
+(defcfun ("cl_wuffs_hasher_free" %hasher-free) :void
+  (hasher :pointer)
+)
+
 (defcfun ("cl_wuffs_decompressor_create" %decompressor-create) :int32
   (format :int32)
   (literal-width :uint32)

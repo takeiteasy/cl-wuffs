@@ -7,6 +7,7 @@
 (define-condition unknown-format (wuffs-error) ())
 (define-condition decode-error (wuffs-error) ())
 (define-condition decompression-error (wuffs-error) ())
+(define-condition hash-error (wuffs-error) ())
 
 (defstruct image
   (pixels (make-array 0 :element-type '(unsigned-byte 8)) :type (simple-array (unsigned-byte 8) (*)))
@@ -81,6 +82,60 @@
 (defun adler32 (octets)
   (cl-wuffs.bindings:adler32 (ensure-octets octets)))
 
+(defun crc32 (octets)
+  (cl-wuffs.bindings:crc32 (ensure-octets octets)))
+
+(defstruct (hasher (:constructor %make-hasher (handle)))
+  handle
+  (state :open))
+
+(defun hash-algorithm (algorithm)
+  (case algorithm
+    (:adler32 1)
+    (:crc32 2)
+    (otherwise
+     (error 'hash-error :message "Unsupported hash algorithm."))))
+
+(defun make-hasher (algorithm)
+  (multiple-value-bind (handle status message)
+      (cl-wuffs.bindings:hasher-create (hash-algorithm algorithm))
+    (unless (zerop status)
+      (error 'hash-error :message (or message "Could not create hasher.")))
+    (%make-hasher handle)))
+
+(defun ensure-open-hasher (hasher)
+  (unless (and (typep hasher 'hasher)
+               (eq (hasher-state hasher) :open))
+    (error 'hash-error :message "Hasher is not open."))
+  hasher)
+
+(defun hash-chunk (hasher octets)
+  (ensure-open-hasher hasher)
+  (multiple-value-bind (digest status message)
+      (cl-wuffs.bindings:hasher-update (hasher-handle hasher) (ensure-octets octets))
+    (declare (ignore digest))
+    (unless (zerop status)
+      (error 'hash-error :message (or message "Hashing failed.")))
+    hasher))
+
+(defun finish-hasher (hasher)
+  (ensure-open-hasher hasher)
+  (multiple-value-bind (digest status message)
+      (cl-wuffs.bindings:hasher-update (hasher-handle hasher)
+                                        (make-array 0 :element-type '(unsigned-byte 8)))
+    (unless (zerop status)
+      (error 'hash-error :message (or message "Hashing failed.")))
+    (setf (hasher-state hasher) :finished)
+    digest))
+
+(defun close-hasher (hasher)
+  (when (and (typep hasher 'hasher)
+             (hasher-handle hasher))
+    (cl-wuffs.bindings:hasher-free (hasher-handle hasher))
+    (setf (hasher-handle hasher) nil
+          (hasher-state hasher) :closed))
+  nil)
+
 (defstruct (decompressor (:constructor %make-decompressor (handle)))
   handle
   (state :open))
@@ -137,3 +192,22 @@
     (setf (decompressor-handle decompressor) nil
           (decompressor-state decompressor) :closed))
   nil)
+
+(defun decompress-stream (format input output &key literal-width (buffer-size 8192))
+  (unless (typep buffer-size '(integer 1))
+    (error 'type-error :datum buffer-size :expected-type '(integer 1)))
+  (let ((buffer (make-array buffer-size :element-type '(unsigned-byte 8)))
+        (decompressor (make-decompressor format :literal-width literal-width)))
+    (unwind-protect
+         (progn
+           (loop for length = (read-sequence buffer input)
+                 while (plusp length)
+                 do (write-sequence
+                     (decompress-chunk decompressor
+                                       (if (= length buffer-size)
+                                           buffer
+                                           (subseq buffer 0 length)))
+                     output))
+           (write-sequence (finish-decompressor decompressor) output))
+      (close-decompressor decompressor))
+    nil))

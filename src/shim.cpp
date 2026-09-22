@@ -43,6 +43,10 @@ struct cl_wuffs_decompressor {
   bool finished;
 };
 
+struct cl_wuffs_hasher {
+  wuffs_base__hasher_u32* hasher;
+};
+
 extern "C" int32_t cl_wuffs_detect_format(const uint8_t* data, size_t length) {
   if (!data && length) {
     return 0;
@@ -116,6 +120,67 @@ extern "C" uint32_t cl_wuffs_adler32(const uint8_t* data, size_t length) {
   }
   return wuffs_adler32__hasher__update_u32(
       &hasher, wuffs_base__make_slice_u8(const_cast<uint8_t*>(data), length));
+}
+
+extern "C" uint32_t cl_wuffs_crc32(const uint8_t* data, size_t length) {
+  if (!data && length) return 0;
+  wuffs_crc32__ieee_hasher hasher = {};
+  if (!wuffs_crc32__ieee_hasher__initialize(&hasher, sizeof(hasher), WUFFS_VERSION,
+                                             WUFFS_INITIALIZE__ALREADY_ZEROED).is_ok()) {
+    return 0;
+  }
+  return wuffs_crc32__ieee_hasher__update_u32(
+      &hasher, wuffs_base__make_slice_u8(const_cast<uint8_t*>(data), length));
+}
+
+extern "C" int32_t cl_wuffs_hasher_create(
+    int32_t algorithm, struct cl_wuffs_hasher** hasher, const char** error_message) {
+  if (error_message) *error_message = nullptr;
+  if (!hasher) return CL_WUFFS_INVALID_ARGUMENT;
+  *hasher = nullptr;
+  wuffs_base__hasher_u32* implementation = nullptr;
+  switch (algorithm) {
+    case CL_WUFFS_ADLER32:
+      implementation = wuffs_adler32__hasher__alloc_as__wuffs_base__hasher_u32();
+      break;
+    case CL_WUFFS_CRC32:
+      implementation = wuffs_crc32__ieee_hasher__alloc_as__wuffs_base__hasher_u32();
+      break;
+    default:
+      set_error(error_message, "unsupported hash algorithm");
+      return CL_WUFFS_INVALID_ARGUMENT;
+  }
+  if (!implementation) {
+    set_error(error_message, "out of memory");
+    return CL_WUFFS_OUT_OF_MEMORY;
+  }
+  try {
+    *hasher = new cl_wuffs_hasher{implementation};
+  } catch (...) {
+    std::free(implementation);
+    set_error(error_message, "out of memory");
+    return CL_WUFFS_OUT_OF_MEMORY;
+  }
+  return CL_WUFFS_OK;
+}
+
+extern "C" int32_t cl_wuffs_hasher_update(
+    struct cl_wuffs_hasher* hasher, const uint8_t* data, size_t length,
+    uint32_t* digest, const char** error_message) {
+  if (error_message) *error_message = nullptr;
+  if (!hasher || !digest || (!data && length)) {
+    set_error(error_message, "invalid argument");
+    return CL_WUFFS_INVALID_ARGUMENT;
+  }
+  *digest = wuffs_base__hasher_u32__update_u32(
+      hasher->hasher, wuffs_base__make_slice_u8(const_cast<uint8_t*>(data), length));
+  return CL_WUFFS_OK;
+}
+
+extern "C" void cl_wuffs_hasher_free(struct cl_wuffs_hasher* hasher) {
+  if (!hasher) return;
+  std::free(hasher->hasher);
+  delete hasher;
 }
 
 extern "C" int32_t cl_wuffs_decompressor_create(

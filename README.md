@@ -1,9 +1,26 @@
 # cl-wuffs
 
+> **Work in progress.** This project is under development; expect missing features and breaking changes.
+
 Common Lisp bindings for [Wuffs](https://github.com/google/wuffs), a safe and
 fast decoder library.
 
 ## Installation
+
+From the takeiteasy Quicklisp dist:
+
+```lisp
+(ql-dist:install-dist "https://takeiteasy.github.io/ql-dist/dist/takeiteasy.txt")
+(ql:quickload :cl-wuffs)
+```
+
+Or clone into Quicklisp's local-projects:
+
+```sh
+git clone https://github.com/takeiteasy/cl-wuffs ~/quicklisp/local-projects/cl-wuffs
+```
+
+### Native library
 
 cl-wuffs requires [CFFI](https://common-lisp.net/project/cffi/), CMake, and a
 C++17 compiler. Build the native library:
